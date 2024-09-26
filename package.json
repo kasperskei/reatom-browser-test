@@ -1,0 +1,28 @@
+{
+  "name": "reatom-browser-test",
+  "type": "module",
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@web/dev-server": "^0.4.6",
+    "@web/dev-server-esbuild": "^1.0.2",
+    "@web/test-runner": "^0.19.0",
+    "@web/test-runner-puppeteer": "^0.17.0"
+  },
+  "peerDependencies": {
+    "typescript": "^5.6.2"
+  },
+  "dependencies": {
+    "@reatom/framework": "^3.4.52",
+    "@reatom/jsx": "^3.13.1",
+    "@reatom/testing": "^3.4.7",
+    "@reatom/url": "^3.7.3",
+    "puppeteer": "^23.4.1",
+    "uvu": "^0.5.6"
+  },
+  "scripts": {
+    "start": "wds --open demo/",
+    "start:watch": "wds --open demo/ --watch",
+    "test": "wtr test/**/*.test.tsx",
+    "test:watch": "wtr test/**/*.test.tsx --watch"
+  }
+}

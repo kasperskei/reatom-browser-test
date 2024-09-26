@@ -1,0 +1,472 @@
+import * as assert from 'uvu/assert'
+import { reatomJsx, type JSX } from '@reatom/jsx'
+import { createTestCtx, mockFn, type TestCtx } from '@reatom/testing'
+import { atom, isConnected, reatomLinkedList, sleep, type Fn, type Rec } from '@reatom/framework'
+
+let ctx: TestCtx
+let parent: HTMLDivElement
+let h: (tag: any, props: Rec, ...children: any[]) => any
+let hf: () => void
+let mount: (target: Element, child: Element) => void
+
+beforeEach(() => {
+  ctx = createTestCtx()
+  parent = window.document.createElement('div')
+  const jsx = reatomJsx(ctx, window)
+
+  h = jsx.h
+  hf = jsx.hf
+  mount = jsx.mount
+
+  window.document.body.appendChild(parent)
+})
+
+afterEach(() => {
+  if (window.document.body.contains(parent)) {
+    window.document.body.removeChild(parent)
+  }
+})
+
+describe('jsx', () => {
+  it('static props & children', () => {
+    const element = <div id="some-id">Hello, world!</div>
+
+    assert.is(element.tagName, 'DIV')
+    assert.is(element.id, 'some-id')
+    assert.is(element.childNodes.length, 1)
+    assert.is(element.textContent, 'Hello, world!')
+  })
+
+  it('dynamic props', () => {
+    const val = atom('val', 'val')
+    const prp = atom('prp', 'prp')
+    const atr = atom('atr', 'atr')
+
+    const element = <div id={val} prop:prp={prp} attr:atr={atr} />
+
+    mount(parent, element)
+
+    assert.is(element.id, 'val')
+    // @ts-expect-error `dunno` can't be inferred
+    assert.is(element.prp, 'prp')
+    assert.is(element.getAttribute('atr'), 'atr')
+
+    val(ctx, 'val1')
+    prp(ctx, 'prp1')
+    atr(ctx, 'atr1')
+
+    assert.is(element.id, 'val1')
+    // @ts-expect-error `dunno` can't be inferred
+    assert.is(element.prp, 'prp1')
+    assert.is(element.getAttribute('atr'), 'atr1')
+  })
+
+  it('children updates', () => {
+    const val = atom('foo', 'val')
+
+    const route = atom('a', 'route')
+    const a = window.document.createElement('div')
+    const b = window.document.createElement('div')
+
+    const element = (
+      <div>
+        Static one. {val}
+        {atom((ctx) => (ctx.spy(route) === 'a' ? a : b))}
+      </div>
+    )
+
+    mount(parent, element)
+
+    assert.is(element.childNodes.length, 3)
+    assert.is(element.childNodes[1]?.textContent, 'foo')
+    assert.is(element.childNodes[2], a)
+
+    val(ctx, 'bar')
+    assert.is(element.childNodes[1]?.textContent, 'bar')
+
+    assert.is(element.childNodes[2], a)
+    route(ctx, 'b')
+    assert.is(element.childNodes[2], b)
+  })
+
+  it('dynamic children', () => {
+    const children = atom(<div />)
+
+    const element = <div>{children}</div>
+
+    mount(parent, element)
+
+    assert.is(element.childNodes.length, 1)
+
+    children(ctx, <div>Hello, world!</div>)
+    assert.is(element.childNodes[0]?.textContent, 'Hello, world!')
+
+    const inner = <span>inner</span>
+    children(ctx, <div>{inner}</div>)
+    assert.is(element.childNodes[0]?.childNodes[0], inner)
+
+    const before = atom('before', 'before')
+    const after = atom('after', 'after')
+    children(
+      ctx,
+      <div>
+        {before}
+        {inner}
+        {after}
+      </div>,
+    )
+    assert.is((element as HTMLDivElement).innerText, 'beforeinnerafter')
+
+    before(ctx, 'before...')
+    assert.is((element as HTMLDivElement).innerText, 'before...innerafter')
+  })
+
+  it('spreads', () => {
+    const clickTrack = mockFn()
+    const props = atom({
+      id: '1',
+      'attr:b': '2',
+      'on:click': clickTrack as Fn,
+    })
+
+    const element = <div $spread={props} />
+
+    mount(parent, element)
+
+    assert.is(element.id, '1')
+    assert.is(element.getAttribute('b'), '2')
+    assert.is(clickTrack.calls.length, 0)
+    // @ts-expect-error
+    element.click()
+    assert.is(clickTrack.calls.length, 1)
+  })
+
+  it('fragment as child', () => {
+    const child = (
+      <>
+        <div>foo</div>
+        <>
+          <div>bar</div>
+        </>
+      </>
+    )
+    mount(parent, child)
+
+    assert.is(parent.childNodes.length, 2)
+    assert.is(parent.childNodes[0]?.textContent, 'foo')
+    assert.is(parent.childNodes[1]?.textContent, 'bar')
+  })
+
+  it('array children', () => {
+    const n = atom(1)
+    const list = atom((ctx) => Array.from({ length: ctx.spy(n) }, (_, i) => <li>{i + 1}</li>))
+
+    assert.throws(() => {
+      mount(
+        parent,
+        <ul>
+          {list /* expected TS error */ as any}
+          <br />
+        </ul>,
+      )
+    })
+
+    const element = <ul>{list}</ul>
+
+    assert.is(element.childNodes.length, 1)
+    assert.is(element.textContent, '1')
+
+    n(ctx, 2)
+    assert.is(element.childNodes.length, 2)
+    assert.is(element.textContent, '12')
+  })
+
+  it('linked list', async () => {
+    const list = reatomLinkedList((ctx, n: number) => atom(n))
+    const jsxList = list.reatomMap((ctx, n) => <span>{n}</span>)
+    const one = list.create(ctx, 1)
+    const two = list.create(ctx, 2)
+
+    mount(parent, <div>{jsxList}</div>)
+
+    assert.is(parent.innerText, '12')
+    assert.ok(isConnected(ctx, one))
+    assert.ok(isConnected(ctx, two))
+
+    list.swap(ctx, one, two)
+    assert.is(parent.innerText, '21')
+
+    list.remove(ctx, two)
+    assert.is(parent.innerText, '1')
+    await sleep()
+    assert.ok(isConnected(ctx, one))
+    assert.not.ok(isConnected(ctx, two))
+  })
+
+  it('boolean as child', () => {
+    const trueAtom = atom(true, 'true')
+    const trueValue = true
+    const falseAtom = atom(false, 'false')
+    const falseValue = false
+
+    const element = (
+      <div>
+        {trueAtom}
+        {trueValue}
+        {falseAtom}
+        {falseValue}
+      </div>
+    )
+
+    assert.is(element.childNodes.length, 2)
+    assert.is(element.textContent, '')
+  })
+
+  it('null as child', () => {
+    const nullAtom = atom(null, 'null')
+    const nullValue = null
+
+    const element = (
+      <div>
+        {nullAtom}
+        {nullValue}
+      </div>
+    )
+
+    assert.is(element.childNodes.length, 1)
+    assert.is(element.textContent, '')
+  })
+
+  it('undefined as child', () => {
+    const undefinedAtom = atom(undefined, 'undefined')
+    const undefinedValue = undefined
+
+    const element = (
+      <div>
+        {undefinedAtom}
+        {undefinedValue}
+      </div>
+    )
+
+    assert.is(element.childNodes.length, 1)
+    assert.is(element.textContent, '')
+  })
+
+  it('empty string as child', () => {
+    const emptyStringAtom = atom('', 'emptyString')
+    const emptyStringValue = ''
+
+    const element = (
+      <div>
+        {emptyStringAtom}
+        {emptyStringValue}
+      </div>
+    )
+
+    assert.is(element.childNodes.length, 1)
+    assert.is(element.textContent, '')
+  })
+
+  it('update skipped atom', () => {
+    const valueAtom = atom<number | undefined>(undefined, 'value')
+
+    const element = <div>{valueAtom}</div>
+
+    mount(parent, element)
+
+    assert.is(parent.childNodes.length, 1)
+    assert.is(parent.textContent, '')
+
+    valueAtom(ctx, 123)
+
+    assert.is(parent.childNodes.length, 1)
+    assert.is(parent.textContent, '123')
+  })
+
+  it('render HTMLElement atom', () => {
+    const htmlAtom = atom(<div>div</div>, 'html')
+
+    const element = <div>{htmlAtom}</div>
+
+    assert.is(element.innerHTML, '<div>div</div>')
+  })
+
+  it('render SVGElement atom', () => {
+    const svgAtom = atom(<svg:svg>svg</svg:svg>, 'svg')
+
+    const element = <div>{svgAtom}</div>
+
+    assert.is(element.innerHTML, '<svg>svg</svg>')
+  })
+
+  it('custom component', () => {
+    const Component = (props: JSX.HTMLAttributes) => <div {...props} />
+
+    assert.instance(<Component />, window.HTMLElement)
+    assert.is(((<Component draggable />) as HTMLElement).draggable, true)
+    assert.equal(((<Component>123</Component>) as HTMLElement).innerText, '123')
+  })
+
+  it('ref unmount callback', async () => {
+    const Component = (props: JSX.HTMLAttributes) => <div {...props} />
+
+    let ref: null | HTMLElement = null
+
+    const component = (
+      <Component
+        ref={(ctx, el) => {
+          ref = el
+          return () => {
+            ref = null
+          }
+        }}
+      />
+    )
+
+    mount(parent, component)
+    assert.instance(ref, window.HTMLElement)
+
+    parent.remove()
+    await sleep()
+    assert.is(ref, null)
+  })
+
+  it('child ref unmount callback', async () => {
+    const Component = (props: JSX.HTMLAttributes) => <div {...props} />
+
+    let ref: null | HTMLElement = null
+
+    const component = (
+      <Component
+        ref={(ctx, el) => {
+          ref = el
+          return () => {
+            ref = null
+          }
+        }}
+      />
+    )
+
+    mount(parent, component)
+    assert.instance(ref, window.HTMLElement)
+    await sleep()
+
+    ref!.remove()
+    await sleep()
+    assert.is(ref, null)
+  })
+
+  it('same arguments in ref mount and unmount hooks', async () => {
+    const mountArgs: unknown[] = []
+    const unmountArgs: unknown[] = []
+
+    let ref: null | HTMLElement = null
+
+    const component = (
+      <div
+        ref={(ctx, el) => {
+          mountArgs.push(ctx, el)
+          ref = el
+          return (ctx, el) => {
+            unmountArgs.push(ctx, el)
+            ref = null
+          }
+        }}
+      />
+    )
+
+    mount(parent, component)
+    assert.instance(ref, window.HTMLElement)
+    await sleep()
+
+    ref!.remove()
+    await sleep()
+    assert.is(ref, null)
+
+    assert.is(mountArgs[0], ctx)
+    assert.is(mountArgs[1], component)
+
+    assert.is(unmountArgs[0], ctx)
+    assert.is(unmountArgs[1], component)
+  })
+
+  it('css property and class attribute', async () => {
+    const cls = 'class'
+    const css = 'color: red;'
+
+    const ref1 = (<div css={css} class={cls}></div>)
+    const ref2 = (<div class={cls} css={css}></div>)
+
+    const component = (
+      <div>
+        {ref1}
+        {ref2}
+      </div>
+    )
+
+    mount(parent, component)
+    assert.instance(ref1, window.HTMLElement)
+    assert.instance(ref2, window.HTMLElement)
+    await sleep()
+
+    assert.is(ref1.className, cls)
+    assert.ok(ref1.dataset.reatom)
+
+    assert.is(ref2.className, cls)
+    assert.ok(ref2.dataset.reatom)
+
+    assert.is(ref1.dataset.reatom, ref2.dataset.reatom)
+  })
+
+  it('ref mount and unmount callbacks order', async () => {
+    const order: number[] = []
+
+    const createRef = (index: number) => {
+      return () => {
+        order.push(index)
+        return () => {
+          order.push(index)
+        }
+      }
+    }
+
+    const component = (
+      <div ref={createRef(0)}>
+        <div ref={createRef(1)}>
+          <div ref={createRef(2)}>
+          </div>
+        </div>
+      </div>
+    )
+
+    mount(parent, component)
+    parent.remove()
+    await sleep()
+
+    assert.equal(order, [2, 1, 0, 2, 1, 0])
+  })
+
+  it('style object update', () => {
+    const styleAtom = atom({
+      top: '0',
+      right: undefined,
+      bottom: null as unknown as undefined,
+      left: '0',
+    } as JSX.CSSProperties)
+
+    const component = (
+      <div style={styleAtom}></div>
+    )
+
+    mount(parent, component)
+
+    assert.is(component.getAttribute('style'), 'top: 0px; left: 0px;')
+
+    styleAtom(ctx, {
+      top: undefined,
+      bottom: '0',
+    })
+
+    assert.is(component.getAttribute('style'), 'left: 0px; bottom: 0px;')
+  })
+})
