@@ -1,43 +1,40 @@
 import * as assert from 'uvu/assert'
-import { reatomJsx, type JSX } from '@reatom/jsx'
+import { reatomJsx, type JSX } from '../src/index.ts'
 import { createTestCtx, mockFn, type TestCtx } from '@reatom/testing'
 import { atom, isConnected, reatomLinkedList, sleep, type Fn, type Rec } from '@reatom/framework'
 
-let ctx: TestCtx
-let parent: HTMLDivElement
-let h: (tag: any, props: Rec, ...children: any[]) => any
-let hf: () => void
-let mount: (target: Element, child: Element) => void
+type SetupFn = (
+  ctx: TestCtx,
+  h: (tag: any, props: Rec, ...children: any[]) => any,
+  hf: () => void,
+  mount: (target: Element, child: Element) => void,
+  parent: HTMLElement,
+) => void
 
-beforeEach(() => {
-  ctx = createTestCtx()
-  parent = window.document.createElement('div')
+const setup = (fn: SetupFn) => async () => {
+  const ctx = createTestCtx()
+  const parent = window.document.createElement('div')
   const jsx = reatomJsx(ctx, window)
-
-  h = jsx.h
-  hf = jsx.hf
-  mount = jsx.mount
-
   window.document.body.appendChild(parent)
-})
 
-afterEach(() => {
+  await fn(ctx, jsx.h, jsx.hf, jsx.mount, parent)
+
   if (window.document.body.contains(parent)) {
     window.document.body.removeChild(parent)
   }
-})
+}
 
 describe('jsx', () => {
-  it('static props & children', () => {
+  it('static props & children', setup((ctx, h, hf, mount, parent) => {
     const element = <div id="some-id">Hello, world!</div>
 
     assert.is(element.tagName, 'DIV')
     assert.is(element.id, 'some-id')
     assert.is(element.childNodes.length, 1)
     assert.is(element.textContent, 'Hello, world!')
-  })
+  }))
 
-  it('dynamic props', () => {
+  it('dynamic props', setup((ctx, h, hf, mount, parent) => {
     const val = atom('val', 'val')
     const prp = atom('prp', 'prp')
     const atr = atom('atr', 'atr')
@@ -59,9 +56,9 @@ describe('jsx', () => {
     // @ts-expect-error `dunno` can't be inferred
     assert.is(element.prp, 'prp1')
     assert.is(element.getAttribute('atr'), 'atr1')
-  })
+  }))
 
-  it('children updates', () => {
+  it('children updates', setup((ctx, h, hf, mount, parent) => {
     const val = atom('foo', 'val')
 
     const route = atom('a', 'route')
@@ -87,9 +84,9 @@ describe('jsx', () => {
     assert.is(element.childNodes[2], a)
     route(ctx, 'b')
     assert.is(element.childNodes[2], b)
-  })
+  }))
 
-  it('dynamic children', () => {
+  it('dynamic children', setup((ctx, h, hf, mount, parent) => {
     const children = atom(<div />)
 
     const element = <div>{children}</div>
@@ -119,9 +116,9 @@ describe('jsx', () => {
 
     before(ctx, 'before...')
     assert.is((element as HTMLDivElement).innerText, 'before...innerafter')
-  })
+  }))
 
-  it('spreads', () => {
+  it('spreads', setup((ctx, h, hf, mount, parent) => {
     const clickTrack = mockFn()
     const props = atom({
       id: '1',
@@ -139,9 +136,9 @@ describe('jsx', () => {
     // @ts-expect-error
     element.click()
     assert.is(clickTrack.calls.length, 1)
-  })
+  }))
 
-  it('fragment as child', () => {
+  it('fragment as child', setup((ctx, h, hf, mount, parent) => {
     const child = (
       <>
         <div>foo</div>
@@ -155,9 +152,9 @@ describe('jsx', () => {
     assert.is(parent.childNodes.length, 2)
     assert.is(parent.childNodes[0]?.textContent, 'foo')
     assert.is(parent.childNodes[1]?.textContent, 'bar')
-  })
+  }))
 
-  it('array children', () => {
+  it('array children', setup((ctx, h, hf, mount, parent) => {
     const n = atom(1)
     const list = atom((ctx) => Array.from({ length: ctx.spy(n) }, (_, i) => <li>{i + 1}</li>))
 
@@ -179,9 +176,9 @@ describe('jsx', () => {
     n(ctx, 2)
     assert.is(element.childNodes.length, 2)
     assert.is(element.textContent, '12')
-  })
+  }))
 
-  it('linked list', async () => {
+  it('linked list', setup(async (ctx, h, hf, mount, parent) => {
     const list = reatomLinkedList((ctx, n: number) => atom(n))
     const jsxList = list.reatomMap((ctx, n) => <span>{n}</span>)
     const one = list.create(ctx, 1)
@@ -201,9 +198,9 @@ describe('jsx', () => {
     await sleep()
     assert.ok(isConnected(ctx, one))
     assert.not.ok(isConnected(ctx, two))
-  })
+  }))
 
-  it('boolean as child', () => {
+  it('boolean as child', setup((ctx, h, hf, mount, parent) => {
     const trueAtom = atom(true, 'true')
     const trueValue = true
     const falseAtom = atom(false, 'false')
@@ -220,9 +217,9 @@ describe('jsx', () => {
 
     assert.is(element.childNodes.length, 2)
     assert.is(element.textContent, '')
-  })
+  }))
 
-  it('null as child', () => {
+  it('null as child', setup((ctx, h, hf, mount, parent) => {
     const nullAtom = atom(null, 'null')
     const nullValue = null
 
@@ -235,9 +232,9 @@ describe('jsx', () => {
 
     assert.is(element.childNodes.length, 1)
     assert.is(element.textContent, '')
-  })
+  }))
 
-  it('undefined as child', () => {
+  it('undefined as child', setup((ctx, h, hf, mount, parent) => {
     const undefinedAtom = atom(undefined, 'undefined')
     const undefinedValue = undefined
 
@@ -250,9 +247,9 @@ describe('jsx', () => {
 
     assert.is(element.childNodes.length, 1)
     assert.is(element.textContent, '')
-  })
+  }))
 
-  it('empty string as child', () => {
+  it('empty string as child', setup((ctx, h, hf, mount, parent) => {
     const emptyStringAtom = atom('', 'emptyString')
     const emptyStringValue = ''
 
@@ -265,9 +262,9 @@ describe('jsx', () => {
 
     assert.is(element.childNodes.length, 1)
     assert.is(element.textContent, '')
-  })
+  }))
 
-  it('update skipped atom', () => {
+  it('update skipped atom', setup((ctx, h, hf, mount, parent) => {
     const valueAtom = atom<number | undefined>(undefined, 'value')
 
     const element = <div>{valueAtom}</div>
@@ -281,33 +278,33 @@ describe('jsx', () => {
 
     assert.is(parent.childNodes.length, 1)
     assert.is(parent.textContent, '123')
-  })
+  }))
 
-  it('render HTMLElement atom', () => {
+  it('render HTMLElement atom', setup((ctx, h, hf, mount, parent) => {
     const htmlAtom = atom(<div>div</div>, 'html')
 
     const element = <div>{htmlAtom}</div>
 
     assert.is(element.innerHTML, '<div>div</div>')
-  })
+  }))
 
-  it('render SVGElement atom', () => {
+  it('render SVGElement atom', setup((ctx, h, hf, mount, parent) => {
     const svgAtom = atom(<svg:svg>svg</svg:svg>, 'svg')
 
     const element = <div>{svgAtom}</div>
 
     assert.is(element.innerHTML, '<svg>svg</svg>')
-  })
+  }))
 
-  it('custom component', () => {
+  it('custom component', setup((ctx, h, hf, mount, parent) => {
     const Component = (props: JSX.HTMLAttributes) => <div {...props} />
 
     assert.instance(<Component />, window.HTMLElement)
     assert.is(((<Component draggable />) as HTMLElement).draggable, true)
     assert.equal(((<Component>123</Component>) as HTMLElement).innerText, '123')
-  })
+  }))
 
-  it('ref unmount callback', async () => {
+  it('ref unmount callback', setup(async (ctx, h, hf, mount, parent) => {
     const Component = (props: JSX.HTMLAttributes) => <div {...props} />
 
     let ref: null | HTMLElement = null
@@ -329,9 +326,9 @@ describe('jsx', () => {
     parent.remove()
     await sleep()
     assert.is(ref, null)
-  })
+  }))
 
-  it('child ref unmount callback', async () => {
+  it('child ref unmount callback', setup(async (ctx, h, hf, mount, parent) => {
     const Component = (props: JSX.HTMLAttributes) => <div {...props} />
 
     let ref: null | HTMLElement = null
@@ -354,9 +351,9 @@ describe('jsx', () => {
     ref!.remove()
     await sleep()
     assert.is(ref, null)
-  })
+  }))
 
-  it('same arguments in ref mount and unmount hooks', async () => {
+  it('same arguments in ref mount and unmount hooks', setup(async (ctx, h, hf, mount, parent) => {
     const mountArgs: unknown[] = []
     const unmountArgs: unknown[] = []
 
@@ -388,9 +385,9 @@ describe('jsx', () => {
 
     assert.is(unmountArgs[0], ctx)
     assert.is(unmountArgs[1], component)
-  })
+  }))
 
-  it('css property and class attribute', async () => {
+  it('css property and class attribute', setup(async (ctx, h, hf, mount, parent) => {
     const cls = 'class'
     const css = 'color: red;'
 
@@ -416,9 +413,9 @@ describe('jsx', () => {
     assert.ok(ref2.dataset.reatom)
 
     assert.is(ref1.dataset.reatom, ref2.dataset.reatom)
-  })
+  }))
 
-  it('ref mount and unmount callbacks order', async () => {
+  it('ref mount and unmount callbacks order', setup(async (ctx, h, hf, mount, parent) => {
     const order: number[] = []
 
     const createRef = (index: number) => {
@@ -444,9 +441,38 @@ describe('jsx', () => {
     await sleep()
 
     assert.equal(order, [2, 1, 0, 2, 1, 0])
-  })
+  }))
 
-  it('style object update', () => {
+  it('ref mount and unmount callbacks order', setup(async (ctx, h, hf, mount, parent) => {
+    const order: number[] = []
+
+    const createRef = (index: number) => {
+      return () => {
+        order.push(index)
+        return () => {
+          order.push(index)
+        }
+      }
+    }
+
+    const component = (
+      <div ref={createRef(0)}>
+        <div ref={createRef(1)}>
+          <div ref={createRef(2)}>
+          </div>
+        </div>
+      </div>
+    )
+
+    mount(parent, component)
+    await sleep()
+    parent.remove()
+    await sleep()
+
+    assert.equal(order, [2, 1, 0, 0, 1, 2])
+  }))
+
+  it('style object update', setup((ctx, h, hf, mount, parent) => {
     const styleAtom = atom({
       top: '0',
       right: undefined,
@@ -468,5 +494,41 @@ describe('jsx', () => {
     })
 
     assert.is(component.getAttribute('style'), 'left: 0px; bottom: 0px;')
-  })
+  }))
+
+  it('speed test', setup(async (ctx, h, hf, mount, parent) => {
+    const component = (
+      <div>
+        {Array.from({length: 100}, (_, i) => {
+          return (
+            <div>
+              <span>{i}</span>
+              {Array.from({length: 10}, (_, j) => {
+                return (
+                  <div>
+                    <span>{j}</span>
+                    {Array.from({length: 10}, (_, k) => {
+                      return (
+                        <div>
+                          <span>{k}</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )
+              })}
+            </div>
+          )
+        })}
+      </div>
+    )
+
+    mount(parent, component)
+    await sleep()
+
+    let now = performance.now()
+    parent.remove()
+    await sleep()
+    console.log(performance.now() - now)
+  }))
 })
